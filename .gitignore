@@ -13,6 +13,9 @@ build/
 SPEC.md
 PROMPT.md
 
+# Meson subprojects (fetched via .wrap files)
+subprojects/ebpf-graph-lib/
+
 # Coverage artifacts
 *.gcov
 *.gcda
