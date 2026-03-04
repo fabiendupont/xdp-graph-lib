@@ -245,7 +245,6 @@ xgl_graph_detach(struct xgl_graph *g, const char *ifname)
 int
 xgl_graph_add_tx_port(struct xgl_graph *g, const char *ifname)
 {
-    LIBBPF_OPTS(bpf_map_create_opts, opts);
     unsigned int ifindex;
     struct bpf_devmap_val val;
 
@@ -256,15 +255,13 @@ xgl_graph_add_tx_port(struct xgl_graph *g, const char *ifname)
     if (ifindex == 0)
         return -errno;
 
-    /* Lazily create DEVMAP */
+    /* Use the shared pinned tx_ports map from BPF nodes.
+     * This is the same map all BPF nodes reference after the
+     * generalized map sharing in egl_graph_add_node(). */
     if (g->devmap_fd < 0) {
-        g->devmap_fd = bpf_map_create(BPF_MAP_TYPE_DEVMAP_HASH,
-                                       "xgl_tx_ports",
-                                       sizeof(__u32),
-                                       sizeof(struct bpf_devmap_val),
-                                       256, &opts);
+        g->devmap_fd = egl_graph_get_map_fd(g->egl, "tx_ports");
         if (g->devmap_fd < 0)
-            return -errno;
+            return g->devmap_fd;
     }
 
     memset(&val, 0, sizeof(val));
@@ -377,4 +374,12 @@ xgl_graph_get_stats_map_fd(struct xgl_graph *g)
     if (!g)
         return -1;
     return egl_graph_get_stats_fd(g->egl);
+}
+
+int
+xgl_graph_get_map_fd(struct xgl_graph *g, const char *map_name)
+{
+    if (!g || !map_name)
+        return -EINVAL;
+    return egl_graph_get_map_fd(g->egl, map_name);
 }

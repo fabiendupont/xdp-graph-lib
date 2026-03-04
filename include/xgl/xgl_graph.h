@@ -124,4 +124,12 @@ int xgl_graph_get_prog_array_fd(struct xgl_graph *g);
  */
 int xgl_graph_get_stats_map_fd(struct xgl_graph *g);
 
+/*
+ * xgl_graph_get_map_fd() - Get any pinned map fd by name.
+ *
+ * Delegates to egl_graph_get_map_fd.
+ * Returns fd on success, negative errno on failure.
+ */
+int xgl_graph_get_map_fd(struct xgl_graph *g, const char *map_name);
+
 #endif /* XGL_GRAPH_H */
