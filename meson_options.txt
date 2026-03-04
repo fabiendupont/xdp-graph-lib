@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+option('enable_tests', type: 'boolean', value: true,
+       description: 'Build unit and integration tests')
+option('enable_examples', type: 'boolean', value: true,
+       description: 'Build example programs')

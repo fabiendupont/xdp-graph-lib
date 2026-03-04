@@ -1,0 +1,7 @@
+[wrap-git]
+directory = ebpf-graph-lib
+url = git@github.com:fabiendupont/ebpf-graph-lib.git
+revision = main
+
+[provide]
+ebpf-graph-lib = egl_dep

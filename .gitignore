@@ -1,0 +1,35 @@
+# Build directories
+builddir*/
+build/
+
+# Object files
+*.o
+*.a
+*.so
+*.so.*
+*.bpf.o
+
+# Agent-only specs (not for distribution)
+SPEC.md
+PROMPT.md
+
+# Coverage artifacts
+*.gcov
+*.gcda
+*.gcno
+docs/safety/coverage/
+
+# Claude Code
+.claude/
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db
