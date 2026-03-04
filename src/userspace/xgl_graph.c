@@ -165,16 +165,12 @@ xgl_graph_validate_dag(struct xgl_graph *g)
 int
 xgl_graph_attach(struct xgl_graph *g, const char *ifname)
 {
-    struct egl_bpf_prog *root_prog;
     unsigned int ifindex;
     int root_fd;
     int err;
 
     if (!g || !ifname)
         return -EINVAL;
-
-    if (g->root_obj_path[0] == '\0')
-        return -ENOENT;
 
     /* Validate DAG before attaching (FM-DAG-04) */
     err = xgl_graph_validate_dag(g);
@@ -185,25 +181,14 @@ xgl_graph_attach(struct xgl_graph *g, const char *ifname)
     if (ifindex == 0)
         return -errno;
 
-    /*
-     * Open the root BPF program to get its fd for XDP attachment.
-     * The program is already loaded inside egl_graph, but the fd is
-     * not exposed. We use egl_loader to load a separate copy just
-     * for the attachment fd. The program shares the same PROG_ARRAY
-     * via map reuse.
-     */
-    root_prog = egl_loader_open(g->root_obj_path);
-    if (!root_prog)
-        return -ENOENT;
-
-    root_fd = egl_loader_get_prog_fd(root_prog, g->root_prog_name);
-    if (root_fd < 0) {
-        egl_loader_close(root_prog);
+    /* Use the already-loaded root program fd from egl_graph.
+     * This program shares all maps (prog_array, stats, application
+     * maps) with the rest of the graph via egl_graph_add_node(). */
+    root_fd = egl_graph_get_node_fd(g->egl, 0);
+    if (root_fd < 0)
         return root_fd;
-    }
 
     err = bpf_xdp_attach((int)ifindex, root_fd, 0, NULL);
-    egl_loader_close(root_prog);
     if (err)
         return err;
 
