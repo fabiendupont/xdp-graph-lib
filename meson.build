@@ -24,6 +24,11 @@ libxdp_dep = dependency('libxdp')
 libelf_dep = dependency('libelf')
 
 xgl_inc = include_directories('include')
+xgl_inc_dir = meson.current_source_dir() / 'include'
+
+# BPF common header — public API for BPF node programs.
+# Lives under include/xgl/bpf/ so it resolves via -I<include>.
+install_headers('include/xgl/bpf/xgl_common.bpf.h', subdir: 'xgl/bpf')
 
 # BPF compilation via custom_target
 clang = find_program('clang', required: false)
@@ -37,7 +42,6 @@ egl_inc_dir = egl_sub.get_variable('egl_inc_dir')
 bpf_cflags = ['-target', 'bpf', '-O2', '-g', '-Wall', '-Wextra',
               '-D__TARGET_ARCH_x86',
               '-I' + meson.current_source_dir() / 'include',
-              '-I' + meson.current_source_dir() / 'src' / 'bpf',
               '-I' + egl_inc_dir]
 
 if clang.found()

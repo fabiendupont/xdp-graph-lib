@@ -7,7 +7,7 @@
  * the TX node (index 1).
  */
 
-#include "../../src/bpf/xgl_common.bpf.h"
+#include <xgl/bpf/xgl_common.bpf.h>
 
 char LICENSE[] SEC("license") = "BSD-3-Clause";
 
