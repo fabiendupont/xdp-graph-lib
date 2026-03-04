@@ -27,7 +27,13 @@ xgl_inc = include_directories('include')
 
 # BPF compilation via custom_target
 clang = find_program('clang', required: false)
-egl_inc_dir = meson.current_source_dir() / 'subprojects' / 'ebpf-graph-lib' / 'include'
+
+# Locate ebpf-graph-lib include dir.  When used as a subproject, meson
+# promotes nested subprojects to the top-level subprojects/ directory,
+# so we cannot hardcode a relative path.  Use the exported variable.
+egl_sub = subproject('ebpf-graph-lib')
+egl_inc_dir = egl_sub.get_variable('egl_inc_dir')
+
 bpf_cflags = ['-target', 'bpf', '-O2', '-g', '-Wall', '-Wextra',
               '-D__TARGET_ARCH_x86',
               '-I' + meson.current_source_dir() / 'include',
