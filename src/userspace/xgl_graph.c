@@ -260,7 +260,6 @@ struct xgl_xsk *
 xgl_graph_create_xsk(struct xgl_graph *g,
                       const char *ifname, int queue_id)
 {
-    LIBBPF_OPTS(bpf_map_create_opts, opts);
     struct xgl_xsk *xsk;
     int fd;
 
@@ -277,13 +276,14 @@ xgl_graph_create_xsk(struct xgl_graph *g,
     if (!xsk)
         return NULL;
 
-    /* Lazily create XSKMAP */
+    /* Use the pinned XSKMAP shared by all BPF programs.
+     * BPF nodes declare xgl_xsk_map via XGL_DECLARE_XSKMAP() in
+     * xgl_common.bpf.h.  The first loaded node creates and pins it.
+     * We must use that same map — creating a new one via
+     * bpf_map_create() would produce a disconnected map that BPF
+     * programs never see, causing every bpf_redirect_map() to drop. */
     if (g->xskmap_fd < 0) {
-        g->xskmap_fd = bpf_map_create(BPF_MAP_TYPE_XSKMAP,
-                                       "xgl_xsk_map",
-                                       sizeof(__u32),
-                                       sizeof(__u32),
-                                       4, &opts);
+        g->xskmap_fd = egl_graph_get_map_fd(g->egl, "xgl_xsk_map");
         if (g->xskmap_fd < 0) {
             xgl_xsk_destroy(xsk);
             return NULL;
