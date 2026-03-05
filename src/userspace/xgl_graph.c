@@ -244,7 +244,7 @@ xgl_graph_add_tx_port(struct xgl_graph *g, const char *ifname)
      * This is the same map all BPF nodes reference after the
      * generalized map sharing in egl_graph_add_node(). */
     if (g->devmap_fd < 0) {
-        g->devmap_fd = egl_graph_get_map_fd(g->egl, "tx_ports");
+        g->devmap_fd = egl_graph_get_map_fd(g->egl, "xgl_tx_ports");
         if (g->devmap_fd < 0)
             return g->devmap_fd;
     }

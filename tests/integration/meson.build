@@ -34,7 +34,7 @@ test_xsk_privileged = executable('test_xsk_privileged',
     link_with: xgl_lib,
     include_directories: xgl_inc,
     dependencies: [egl_dep, libbpf_dep, libelf_dep],
-    c_args: extra_c_args)
+    c_args: extra_c_args + ['-DBPF_OBJ_DIR="' + meson.project_build_root() + '"'])
 
 test('test_xsk_privileged', test_xsk_privileged, suite: 'integration',
      is_parallel: false)

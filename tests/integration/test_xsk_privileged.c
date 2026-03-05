@@ -33,6 +33,10 @@
 #include <xgl/xgl_graph.h>
 #include <xgl/xgl_xsk.h>
 
+#ifndef BPF_OBJ_DIR
+#define BPF_OBJ_DIR "."
+#endif
+
 #define VETH0 "xgl_xsk0"
 #define VETH1 "xgl_xsk1"
 
@@ -89,6 +93,10 @@ create_veth_pair(void)
 {
     char cmd[256];
     int ret;
+
+    /* Clean up any leftover interfaces from a previous run */
+    snprintf(cmd, sizeof(cmd), "ip link del %s 2>/dev/null", VETH0);
+    system(cmd);
 
     snprintf(cmd, sizeof(cmd),
              "ip link add %s type veth peer name %s 2>/dev/null",
@@ -214,16 +222,33 @@ test_graph_create_xsk(void)
 {
     struct xgl_graph *g;
     struct xgl_xsk *xsk;
+    char dispatch_path[512];
+    int ret;
 
     TEST(graph_create_xsk_lifecycle);
     if (geteuid() != 0)
         SKIP("not root");
+
+    snprintf(dispatch_path, sizeof(dispatch_path),
+             "%s/xgl_dispatch.bpf.o", BPF_OBJ_DIR);
+    if (access(dispatch_path, R_OK) != 0)
+        SKIP("no xgl_dispatch.bpf.o");
 
     if (create_veth_pair() != 0)
         SKIP("veth creation failed");
 
     g = xgl_graph_create("xsk-graph", 0);
     ASSERT_EQ(g != NULL, 1, "graph creation failed");
+
+    /* Load a BPF node so the XSKMAP gets pinned */
+    ret = xgl_graph_add_node(g, 0, dispatch_path, "xgl_dispatch");
+    if (ret != 0) {
+        printf("SKIP: add_node returned %d (%s)\n", ret, strerror(-ret));
+        tests_skipped++;
+        xgl_graph_destroy(g);
+        destroy_veth_pair();
+        return;
+    }
 
     xsk = xgl_graph_create_xsk(g, VETH0, 0);
     if (!xsk) {
@@ -619,17 +644,33 @@ static void
 test_add_tx_port_success(void)
 {
     struct xgl_graph *g;
+    char dispatch_path[512];
     int ret;
 
     TEST(xsk_add_tx_port_success);
     if (geteuid() != 0)
         SKIP("not root");
 
+    snprintf(dispatch_path, sizeof(dispatch_path),
+             "%s/xgl_dispatch.bpf.o", BPF_OBJ_DIR);
+    if (access(dispatch_path, R_OK) != 0)
+        SKIP("no xgl_dispatch.bpf.o");
+
     if (create_veth_pair() != 0)
         SKIP("veth creation failed");
 
     g = xgl_graph_create("tx-port-test", 0);
     ASSERT_EQ(g != NULL, 1, "graph creation failed");
+
+    /* Load a BPF node so the DEVMAP (xgl_tx_ports) gets pinned */
+    ret = xgl_graph_add_node(g, 0, dispatch_path, "xgl_dispatch");
+    if (ret != 0) {
+        printf("SKIP: add_node returned %d (%s)\n", ret, strerror(-ret));
+        tests_skipped++;
+        xgl_graph_destroy(g);
+        destroy_veth_pair();
+        return;
+    }
 
     ret = xgl_graph_add_tx_port(g, VETH0);
     ASSERT_EQ(ret, 0, "add_tx_port should succeed");
