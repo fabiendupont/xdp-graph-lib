@@ -1,6 +1,6 @@
 [wrap-git]
 directory = ebpf-graph-lib
-url = https://github.com/fabiendupont/ebpf-graph-lib.git
+url = git@github.com:fabiendupont/ebpf-graph-lib.git
 revision = main
 
 [provide]
