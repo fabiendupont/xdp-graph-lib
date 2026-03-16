@@ -17,6 +17,12 @@
 
 #include <xgl/xgl_xsk.h>
 
+/*
+ * Maximum number of packets in a single recv_batch call.
+ * Addresses are stored so recv_release_batch does not re-peek.
+ */
+#define XGL_XSK_MAX_BATCH 64
+
 struct xgl_xsk {
     struct xsk_socket *xsk;
     struct xsk_umem *umem;
@@ -31,10 +37,15 @@ struct xgl_xsk {
     __u32 frame_size;
     __u32 num_frames;
     __u64 cur_tx;
-    __u32 outstanding_tx;
+    __u32 pending_tx;      /* reserved in tx_ring, not yet submitted */
+    __u32 outstanding_tx;  /* submitted to kernel, not yet completed */
 
     /* Track last received frame for release */
     __u64 last_rx_addr;
+
+    /* Track batch-received addresses for release without re-peek */
+    __u64 batch_addrs[XGL_XSK_MAX_BATCH];
+    int batch_count;
 
     bool zerocopy;
 };
@@ -50,6 +61,13 @@ xgl_xsk_create(const char *ifname, int queue_id,
     int err;
 
     if (!ifname || queue_id < 0 || frame_size == 0 || num_frames == 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    /* num_frames must be a power of 2 (libxdp rejects otherwise
+     * with an opaque error — validate early with a clear errno) */
+    if ((num_frames & (num_frames - 1)) != 0) {
         errno = EINVAL;
         return NULL;
     }
@@ -231,6 +249,12 @@ xgl_xsk_send_alloc(struct xgl_xsk *xsk, __u32 len)
         xsk->outstanding_tx -= completed;
     }
 
+    /* Refuse allocation if all frames are in-flight (pending in
+     * tx_ring or submitted to kernel).  Without this check, cur_tx
+     * wraps into a frame still owned by kernel DMA. */
+    if (xsk->pending_tx + xsk->outstanding_tx >= xsk->num_frames)
+        return NULL;
+
     if (xsk_ring_prod__reserve(&xsk->tx_ring, 1, &idx) != 1)
         return NULL;
 
@@ -241,7 +265,7 @@ xgl_xsk_send_alloc(struct xgl_xsk *xsk, __u32 len)
     desc->addr = addr;
     desc->len = len;
 
-    xsk->outstanding_tx++;
+    xsk->pending_tx++;
 
     return xsk_umem__get_data(xsk->umem_area, addr);
 }
@@ -252,7 +276,13 @@ xgl_xsk_send_complete(struct xgl_xsk *xsk)
     if (!xsk)
         return -EINVAL;
 
-    xsk_ring_prod__submit(&xsk->tx_ring, xsk->outstanding_tx);
+    if (xsk->pending_tx == 0)
+        return 0;
+
+    /* Submit only newly-reserved frames since last complete */
+    xsk_ring_prod__submit(&xsk->tx_ring, xsk->pending_tx);
+    xsk->outstanding_tx += xsk->pending_tx;
+    xsk->pending_tx = 0;
 
     /* Kick kernel */
     if (xsk_ring_prod__needs_wakeup(&xsk->tx_ring)) {
@@ -300,6 +330,11 @@ xgl_xsk_recv_batch(struct xgl_xsk *xsk,
     if (!xsk || !pkt_data || !pkt_lens || max <= 0)
         return 0;
 
+    /* Clamp to max batch size so recv_release_batch can use
+     * the stored addresses without re-peeking the RX ring */
+    if (max > XGL_XSK_MAX_BATCH)
+        max = XGL_XSK_MAX_BATCH;
+
     rcvd = xsk_ring_cons__peek(&xsk->rx_ring, (__u32)max, &idx_rx);
     if (rcvd == 0)
         return 0;
@@ -309,7 +344,9 @@ xgl_xsk_recv_batch(struct xgl_xsk *xsk,
             xsk_ring_cons__rx_desc(&xsk->rx_ring, idx_rx + i);
         pkt_data[i] = xsk_umem__get_data(xsk->umem_area, desc->addr);
         pkt_lens[i] = desc->len;
+        xsk->batch_addrs[i] = desc->addr;
     }
+    xsk->batch_count = (int)rcvd;
 
     return (int)rcvd;
 }
@@ -318,30 +355,26 @@ void
 xgl_xsk_recv_release_batch(struct xgl_xsk *xsk, int count)
 {
     __u32 idx_fq = 0;
-    __u32 idx_rx = 0;
-    unsigned int n;
+    __u32 n;
 
     if (!xsk || count <= 0)
         return;
 
-    /*
-     * Re-peek the RX ring to get the addresses for refilling.
-     * The descriptors are still valid until we call release.
-     */
-    n = xsk_ring_cons__peek(&xsk->rx_ring, (__u32)count, &idx_rx);
-    if (n == 0)
-        return;
+    /* Use the addresses stored by recv_batch instead of re-peeking
+     * the RX ring.  Re-peeking is fragile if any other recv call
+     * touches the ring between recv_batch and release_batch. */
+    n = (__u32)count;
+    if (n > (__u32)xsk->batch_count)
+        n = (__u32)xsk->batch_count;
 
     /* Replenish fill ring */
     if (xsk_ring_prod__reserve(&xsk->fill_ring, n, &idx_fq) == n) {
-        for (unsigned int i = 0; i < n; i++) {
-            const struct xdp_desc *desc =
-                xsk_ring_cons__rx_desc(&xsk->rx_ring, idx_rx + i);
+        for (__u32 i = 0; i < n; i++)
             *xsk_ring_prod__fill_addr(&xsk->fill_ring, idx_fq + i) =
-                desc->addr;
-        }
+                xsk->batch_addrs[i];
         xsk_ring_prod__submit(&xsk->fill_ring, n);
     }
 
     xsk_ring_cons__release(&xsk->rx_ring, n);
+    xsk->batch_count = 0;
 }

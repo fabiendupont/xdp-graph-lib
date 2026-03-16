@@ -86,6 +86,22 @@ test_xsk_invalid_params(void)
 }
 
 /*
+ * Test: Non-power-of-2 num_frames rejected early.
+ */
+static void
+test_xsk_non_power_of_2(void)
+{
+    TEST(xsk_create_non_power_of_2);
+    ASSERT_EQ(xgl_xsk_create("lo", 0, 4096, 3), NULL,
+              "num_frames=3 should return NULL");
+    ASSERT_EQ(xgl_xsk_create("lo", 0, 4096, 5), NULL,
+              "num_frames=5 should return NULL");
+    ASSERT_EQ(xgl_xsk_create("lo", 0, 4096, 100), NULL,
+              "num_frames=100 should return NULL");
+    PASS();
+}
+
+/*
  * Test: xgl_xsk_destroy(NULL) is safe.
  */
 static void
@@ -270,6 +286,7 @@ main(void)
 
     test_xsk_null_params();
     test_xsk_invalid_params();
+    test_xsk_non_power_of_2();
     test_xsk_destroy_null();
     test_xsk_zerocopy_null();
     test_xsk_get_fd_null();
