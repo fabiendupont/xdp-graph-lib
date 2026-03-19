@@ -20,6 +20,18 @@ struct xgl_xsk;
 struct xgl_graph *xgl_graph_create(const char *name, int max_nodes);
 
 /*
+ * xgl_graph_create_shared() - Create an XDP graph with a shared PROG_ARRAY.
+ *
+ * Delegates to egl_graph_create_shared(). If prog_array_pin_path exists,
+ * joins the existing PROG_ARRAY; otherwise creates and pins a new one.
+ * Enables cross-project composition (multiple XDP projects sharing one
+ * PROG_ARRAY for tail calls between them).
+ * NULL pin_path behaves like xgl_graph_create().
+ */
+struct xgl_graph *xgl_graph_create_shared(const char *name, int max_nodes,
+                                          const char *prog_array_pin_path);
+
+/*
  * xgl_graph_add_node() - Add a BPF node to the graph.
  *
  * Delegates to egl_graph_add_node.

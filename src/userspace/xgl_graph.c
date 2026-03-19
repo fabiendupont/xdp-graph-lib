@@ -66,6 +66,34 @@ xgl_graph_create(const char *name, int max_nodes)
     return g;
 }
 
+struct xgl_graph *
+xgl_graph_create_shared(const char *name, int max_nodes,
+                        const char *prog_array_pin_path)
+{
+    struct xgl_graph *g;
+
+    if (!name || name[0] == '\0') {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    g = calloc(1, sizeof(*g));
+    if (!g)
+        return NULL;
+
+    g->egl = egl_graph_create_shared(name, max_nodes,
+                                     prog_array_pin_path);
+    if (!g->egl) {
+        free(g);
+        return NULL;
+    }
+
+    g->devmap_fd = -1;
+    g->xskmap_fd = -1;
+
+    return g;
+}
+
 /*
  * FM-NODE-02: Check BPF program type without fully loading.
  *
