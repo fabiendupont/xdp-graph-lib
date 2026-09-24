@@ -86,4 +86,26 @@ int xgl_xsk_recv_batch(struct xgl_xsk *xsk,
  */
 void xgl_xsk_recv_release_batch(struct xgl_xsk *xsk, int count);
 
+/*
+ * xgl_xsk_inherit() - Build an xgl_xsk from two fds received via SCM_RIGHTS.
+ *
+ * Used by rootless applications: the privileged daemon creates the UMEM and
+ * binds the AF_XDP socket, then passes the two file descriptors to the
+ * unprivileged process over a Unix domain socket.  This function mmaps the
+ * UMEM and all four AF_XDP rings from those fds; no CAP_NET_ADMIN or
+ * CAP_BPF is required.
+ *
+ * The caller must supply the same frame_size and num_frames that the daemon
+ * used when creating the socket.
+ *
+ * @xsk_fd:      Bound AF_XDP socket fd received from the daemon.
+ * @umem_fd:     memfd backing the UMEM region received from the daemon.
+ * @frame_size:  UMEM frame size (must match the daemon — typically 4096).
+ * @num_frames:  Number of UMEM frames (power of 2 — must match the daemon).
+ *
+ * Returns socket handle or NULL on failure (check errno).
+ */
+struct xgl_xsk *xgl_xsk_inherit(int xsk_fd, int umem_fd,
+                                 __u32 frame_size, __u32 num_frames);
+
 #endif /* XGL_XSK_H */

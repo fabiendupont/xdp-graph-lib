@@ -4,10 +4,12 @@
 
 #include <errno.h>
 #include <poll.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <linux/if_link.h>
+#include <linux/if_xdp.h>
 #include <net/if.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -48,6 +50,19 @@ struct xgl_xsk {
     int batch_count;
 
     bool zerocopy;
+
+    /* Rootless / inherited path: fds received via SCM_RIGHTS.
+     * raw_fd >= 0 means this socket was not created here; xsk and umem
+     * are NULL and the ring memory is tracked via the _map fields below. */
+    int raw_fd;
+    void *fill_map;
+    void *comp_map;
+    void *rx_map;
+    void *tx_map;
+    __u64 fill_map_size;
+    __u64 comp_map_size;
+    __u64 rx_map_size;
+    __u64 tx_map_size;
 };
 
 struct xgl_xsk *
@@ -76,6 +91,7 @@ xgl_xsk_create(const char *ifname, int queue_id,
     if (!xsk)
         return NULL;
 
+    xsk->raw_fd = -1;
     xsk->frame_size = frame_size;
     xsk->num_frames = num_frames;
     xsk->umem_size = (__u64)frame_size * num_frames;
@@ -168,14 +184,27 @@ xgl_xsk_destroy(struct xgl_xsk *xsk)
     if (!xsk)
         return;
 
-    if (xsk->xsk)
-        xsk_socket__delete(xsk->xsk);
-
-    if (xsk->umem)
-        xsk_umem__delete(xsk->umem);
-
-    if (xsk->umem_area && xsk->umem_area != MAP_FAILED)
-        munmap(xsk->umem_area, xsk->umem_size);
+    if (xsk->raw_fd >= 0) {
+        /* Inherited path: unmap rings we mmap'd, close the fds. */
+        if (xsk->fill_map && xsk->fill_map != MAP_FAILED)
+            munmap(xsk->fill_map, xsk->fill_map_size);
+        if (xsk->comp_map && xsk->comp_map != MAP_FAILED)
+            munmap(xsk->comp_map, xsk->comp_map_size);
+        if (xsk->rx_map && xsk->rx_map != MAP_FAILED)
+            munmap(xsk->rx_map, xsk->rx_map_size);
+        if (xsk->tx_map && xsk->tx_map != MAP_FAILED)
+            munmap(xsk->tx_map, xsk->tx_map_size);
+        if (xsk->umem_area && xsk->umem_area != MAP_FAILED)
+            munmap(xsk->umem_area, xsk->umem_size);
+        close(xsk->raw_fd);
+    } else {
+        if (xsk->xsk)
+            xsk_socket__delete(xsk->xsk);
+        if (xsk->umem)
+            xsk_umem__delete(xsk->umem);
+        if (xsk->umem_area && xsk->umem_area != MAP_FAILED)
+            munmap(xsk->umem_area, xsk->umem_size);
+    }
 
     free(xsk);
 }
@@ -286,7 +315,7 @@ xgl_xsk_send_complete(struct xgl_xsk *xsk)
 
     /* Kick kernel */
     if (xsk_ring_prod__needs_wakeup(&xsk->tx_ring)) {
-        ssize_t ret = sendto(xsk_socket__fd(xsk->xsk),
+        ssize_t ret = sendto(xgl_xsk_get_fd(xsk),
                              NULL, 0, MSG_DONTWAIT, NULL, 0);
         if (ret < 0 && errno != EAGAIN && errno != ENOBUFS &&
             errno != EBUSY)
@@ -304,7 +333,7 @@ xgl_xsk_poll(struct xgl_xsk *xsk, int timeout_ms)
     if (!xsk)
         return -EINVAL;
 
-    fds.fd = xsk_socket__fd(xsk->xsk);
+    fds.fd = xgl_xsk_get_fd(xsk);
     fds.events = POLLIN | POLLOUT;
     fds.revents = 0;
 
@@ -314,7 +343,11 @@ xgl_xsk_poll(struct xgl_xsk *xsk, int timeout_ms)
 int
 xgl_xsk_get_fd(const struct xgl_xsk *xsk)
 {
-    if (!xsk || !xsk->xsk)
+    if (!xsk)
+        return -1;
+    if (xsk->raw_fd >= 0)
+        return xsk->raw_fd;
+    if (!xsk->xsk)
         return -1;
     return xsk_socket__fd(xsk->xsk);
 }
@@ -377,4 +410,139 @@ xgl_xsk_recv_release_batch(struct xgl_xsk *xsk, int count)
 
     xsk_ring_cons__release(&xsk->rx_ring, n);
     xsk->batch_count = 0;
+}
+
+struct xgl_xsk *
+xgl_xsk_inherit(int xsk_fd, int umem_fd, __u32 frame_size, __u32 num_frames)
+{
+    struct xgl_xsk *xsk;
+    struct xdp_mmap_offsets off;
+    socklen_t optlen;
+    __u32 idx;
+
+    if (xsk_fd < 0 || umem_fd < 0 || frame_size == 0 || num_frames == 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if ((num_frames & (num_frames - 1)) != 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    xsk = calloc(1, sizeof(*xsk));
+    if (!xsk)
+        return NULL;
+
+    xsk->raw_fd     = xsk_fd;
+    xsk->frame_size = frame_size;
+    xsk->num_frames = num_frames;
+    xsk->umem_size  = (__u64)frame_size * num_frames;
+    xsk->zerocopy   = false; /* unknown from this side; conservative */
+
+    /* Map the UMEM data area from the memfd. */
+    xsk->umem_area = mmap(NULL, xsk->umem_size,
+                          PROT_READ | PROT_WRITE, MAP_SHARED, umem_fd, 0);
+    if (xsk->umem_area == MAP_FAILED) {
+        free(xsk);
+        return NULL;
+    }
+
+    /* Retrieve ring layout from the kernel. */
+    optlen = sizeof(off);
+    if (getsockopt(xsk_fd, SOL_XDP, XDP_MMAP_OFFSETS, &off, &optlen) < 0) {
+        munmap(xsk->umem_area, xsk->umem_size);
+        free(xsk);
+        return NULL;
+    }
+
+    /* Fill ring (UMEM fill queue). */
+    xsk->fill_map_size = off.fr.desc + (__u64)num_frames * sizeof(__u64);
+    xsk->fill_map = mmap(NULL, xsk->fill_map_size,
+                         PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+                         xsk_fd, XDP_UMEM_PGOFF_FILL_RING);
+    if (xsk->fill_map == MAP_FAILED)
+        goto err_fill;
+
+#define MAP_U32(base, off) ((__u32 *)((uint8_t *)(base) + (off)))
+#define MAP_PTR(base, off) ((uint8_t *)(base) + (off))
+
+    xsk->fill_ring.mask     = num_frames - 1;
+    xsk->fill_ring.size     = num_frames;
+    xsk->fill_ring.producer = MAP_U32(xsk->fill_map, off.fr.producer);
+    xsk->fill_ring.consumer = MAP_U32(xsk->fill_map, off.fr.consumer);
+    xsk->fill_ring.ring     = MAP_PTR(xsk->fill_map, off.fr.desc);
+    xsk->fill_ring.flags    = MAP_U32(xsk->fill_map, off.fr.flags);
+
+    /* Completion ring (UMEM completion queue). */
+    xsk->comp_map_size = off.cr.desc + (__u64)num_frames * sizeof(__u64);
+    xsk->comp_map = mmap(NULL, xsk->comp_map_size,
+                         PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+                         xsk_fd, XDP_UMEM_PGOFF_COMPLETION_RING);
+    if (xsk->comp_map == MAP_FAILED)
+        goto err_comp;
+
+    xsk->comp_ring.mask     = num_frames - 1;
+    xsk->comp_ring.size     = num_frames;
+    xsk->comp_ring.producer = MAP_U32(xsk->comp_map, off.cr.producer);
+    xsk->comp_ring.consumer = MAP_U32(xsk->comp_map, off.cr.consumer);
+    xsk->comp_ring.ring     = MAP_PTR(xsk->comp_map, off.cr.desc);
+    xsk->comp_ring.flags    = MAP_U32(xsk->comp_map, off.cr.flags);
+
+    /* RX ring. */
+    xsk->rx_map_size = off.rx.desc +
+                       (__u64)num_frames * sizeof(struct xdp_desc);
+    xsk->rx_map = mmap(NULL, xsk->rx_map_size,
+                       PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+                       xsk_fd, XDP_PGOFF_RX_RING);
+    if (xsk->rx_map == MAP_FAILED)
+        goto err_rx;
+
+    xsk->rx_ring.mask     = num_frames - 1;
+    xsk->rx_ring.size     = num_frames;
+    xsk->rx_ring.producer = MAP_U32(xsk->rx_map, off.rx.producer);
+    xsk->rx_ring.consumer = MAP_U32(xsk->rx_map, off.rx.consumer);
+    xsk->rx_ring.ring     = MAP_PTR(xsk->rx_map, off.rx.desc);
+    xsk->rx_ring.flags    = MAP_U32(xsk->rx_map, off.rx.flags);
+
+    /* TX ring. */
+    xsk->tx_map_size = off.tx.desc +
+                       (__u64)num_frames * sizeof(struct xdp_desc);
+    xsk->tx_map = mmap(NULL, xsk->tx_map_size,
+                       PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+                       xsk_fd, XDP_PGOFF_TX_RING);
+    if (xsk->tx_map == MAP_FAILED)
+        goto err_tx;
+
+    xsk->tx_ring.mask     = num_frames - 1;
+    xsk->tx_ring.size     = num_frames;
+    xsk->tx_ring.producer = MAP_U32(xsk->tx_map, off.tx.producer);
+    xsk->tx_ring.consumer = MAP_U32(xsk->tx_map, off.tx.consumer);
+    xsk->tx_ring.ring     = MAP_PTR(xsk->tx_map, off.tx.desc);
+    xsk->tx_ring.flags    = MAP_U32(xsk->tx_map, off.tx.flags);
+
+#undef MAP_U32
+#undef MAP_PTR
+
+    /* Seed the fill ring — the daemon left it empty for us to fill. */
+    if (xsk_ring_prod__reserve(&xsk->fill_ring, num_frames, &idx)
+        == num_frames) {
+        for (__u32 i = 0; i < num_frames; i++)
+            *xsk_ring_prod__fill_addr(&xsk->fill_ring, idx + i) =
+                (__u64)i * frame_size;
+        xsk_ring_prod__submit(&xsk->fill_ring, num_frames);
+    }
+
+    return xsk;
+
+err_tx:
+    munmap(xsk->rx_map, xsk->rx_map_size);
+err_rx:
+    munmap(xsk->comp_map, xsk->comp_map_size);
+err_comp:
+    munmap(xsk->fill_map, xsk->fill_map_size);
+err_fill:
+    munmap(xsk->umem_area, xsk->umem_size);
+    free(xsk);
+    return NULL;
 }
