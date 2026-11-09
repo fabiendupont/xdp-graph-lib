@@ -31,3 +31,12 @@ test_wrapper = executable('test_wrapper',
     c_args: extra_c_args)
 
 test('test_wrapper', test_wrapper, suite: 'unit')
+
+test_xgl_check = executable('test_xgl_check',
+    'test_xgl_check.c',
+    link_with: xgl_lib,
+    include_directories: xgl_inc,
+    dependencies: [egl_dep, libbpf_dep, libelf_dep],
+    c_args: extra_c_args)
+
+test('test_xgl_check', test_xgl_check, suite: 'unit')

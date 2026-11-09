@@ -56,6 +56,7 @@ endif
 xgl_lib = static_library('xgl',
     'src/userspace/xgl_graph.c',
     'src/userspace/xgl_xsk.c',
+    'src/userspace/xgl_check.c',
     include_directories: xgl_inc,
     dependencies: [egl_dep, libbpf_dep, libxdp_dep, libelf_dep],
     c_args: extra_c_args)
@@ -72,6 +73,8 @@ endif
 if get_option('enable_examples')
     subdir('examples')
 endif
+
+subdir('tools')
 
 summary({
     'Project': meson.project_name(),
