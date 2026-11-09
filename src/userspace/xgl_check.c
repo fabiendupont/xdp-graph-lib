@@ -331,6 +331,44 @@ static void check_xsks(const struct xgl_check_spec *spec,
                               x->ifname, x->queue_id);
             }
         }
+
+        /* Resource dedication: one IRQ per queue, one CPU per
+         * queue.  Each pair reported once. */
+        for (j = 0; j < i; j++) {
+            const struct xgl_check_xsk *y = &spec->xsks[j];
+
+            if (x->irq >= 0 && x->irq == y->irq) {
+                xgl_check_add(ctx, XGL_CHECK_E_IRQ_DUP, XGL_CHECK_SEV_ERROR,
+                              "irq %d shared by '%s:%d' and '%s:%d'",
+                              x->irq, y->ifname, y->queue_id,
+                              x->ifname, x->queue_id);
+            }
+            if (x->cpu >= 0 && x->cpu == y->cpu) {
+                xgl_check_add(ctx, XGL_CHECK_E_CPU_DUP, XGL_CHECK_SEV_ERROR,
+                              "cpu %d shared by '%s:%d' and '%s:%d'",
+                              x->cpu, y->ifname, y->queue_id,
+                              x->ifname, x->queue_id);
+            }
+        }
+
+        /* NUMA consistency: queue and its dedicated CPU should sit
+         * on the same node (jitter, not correctness — warning). */
+        if (x->numa_node >= 0 && x->cpu_numa_node >= 0 &&
+            x->numa_node != x->cpu_numa_node) {
+            xgl_check_add(ctx, XGL_CHECK_W_NUMA_MISMATCH,
+                          XGL_CHECK_SEV_WARNING,
+                          "'%s:%d' queue on NUMA %d but cpu %d on NUMA %d",
+                          x->ifname, x->queue_id, x->numa_node,
+                          x->cpu, x->cpu_numa_node);
+        }
+
+        /* Neither CPU nor IRQ dedicated: determinism not attempted. */
+        if (x->cpu < 0 && x->irq < 0) {
+            xgl_check_add(ctx, XGL_CHECK_W_NO_DEDICATION,
+                          XGL_CHECK_SEV_WARNING,
+                          "'%s:%d' has no dedicated cpu or irq",
+                          x->ifname, x->queue_id);
+        }
     }
 }
 
@@ -453,8 +491,12 @@ const char *xgl_check_code_str(enum xgl_check_code code)
     case XGL_CHECK_E_ETYPE_RANGE:    return "E_ETYPE_RANGE";
     case XGL_CHECK_E_FILTER_DUP:     return "E_FILTER_DUP";
     case XGL_CHECK_E_FILTER_OVERLAP: return "E_FILTER_OVERLAP";
+    case XGL_CHECK_E_IRQ_DUP:        return "E_IRQ_DUP";
+    case XGL_CHECK_E_CPU_DUP:        return "E_CPU_DUP";
     case XGL_CHECK_W_STATEFUL:       return "W_STATEFUL";
     case XGL_CHECK_W_NO_ZEROCOPY:    return "W_NO_ZEROCOPY";
+    case XGL_CHECK_W_NUMA_MISMATCH:  return "W_NUMA_MISMATCH";
+    case XGL_CHECK_W_NO_DEDICATION:  return "W_NO_DEDICATION";
     case XGL_CHECK_W_TRUNCATED:      return "W_TRUNCATED";
     }
     return "UNKNOWN";

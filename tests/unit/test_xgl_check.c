@@ -47,13 +47,18 @@ static void add_edge(struct xgl_check_spec *s, int from, int to)
 }
 
 static void add_xsk(struct xgl_check_spec *s, const char *ifname, int queue,
-                    int n_queues, bool zerocopy)
+                    int n_queues, bool zerocopy,
+                    int irq, int cpu, int numa, int cpu_numa)
 {
     (void)snprintf(s->xsks[s->n_xsks].ifname,
                    sizeof(s->xsks[s->n_xsks].ifname), "%s", ifname);
     s->xsks[s->n_xsks].queue_id = queue;
     s->xsks[s->n_xsks].n_queues = n_queues;
     s->xsks[s->n_xsks].zerocopy = zerocopy;
+    s->xsks[s->n_xsks].irq = irq;
+    s->xsks[s->n_xsks].cpu = cpu;
+    s->xsks[s->n_xsks].numa_node = numa;
+    s->xsks[s->n_xsks].cpu_numa_node = cpu_numa;
     s->n_xsks++;
 }
 
@@ -102,8 +107,8 @@ static void test_valid(void)
     add_node(&s, 2, "sv_filter", false);
     add_edge(&s, 0, 1);
     add_edge(&s, 0, 2);
-    add_xsk(&s, "eth0", 0, 8, true);
-    add_xsk(&s, "eth0", 1, 8, true);
+    add_xsk(&s, "eth0", 0, 8, true, 24, 2, 0, 0);
+    add_xsk(&s, "eth0", 1, 8, true, 25, 3, 0, 0);
     add_filter(&s, "eth0", 0, 0x88B8);
     add_filter(&s, "eth0", 1, 0x88BA);
 
@@ -233,7 +238,7 @@ static void test_queue_range(void)
 
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 12, 8, true);
+    add_xsk(&s, "eth0", 12, 8, true, -1, -1, -1, -1);
     n = xgl_check_validate(&s, f, 8);
     CHECK(has_code(f, n, XGL_CHECK_E_QUEUE_RANGE));
 }
@@ -246,8 +251,8 @@ static void test_queue_dup(void)
 
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 3, 8, true);
-    add_xsk(&s, "eth0", 3, 8, true);
+    add_xsk(&s, "eth0", 3, 8, true, -1, -1, -1, -1);
+    add_xsk(&s, "eth0", 3, 8, true, -1, -1, -1, -1);
     n = xgl_check_validate(&s, f, 8);
     CHECK(has_code(f, n, XGL_CHECK_E_QUEUE_DUP));
 }
@@ -261,8 +266,8 @@ static void test_queue_dup_other_if(void)
     /* same queue id on different interfaces is fine */
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 3, 8, true);
-    add_xsk(&s, "eth1", 3, 4, true);
+    add_xsk(&s, "eth0", 3, 8, true, -1, -1, -1, -1);
+    add_xsk(&s, "eth1", 3, 4, true, -1, -1, -1, -1);
     n = xgl_check_validate(&s, f, 8);
     CHECK(!has_code(f, n, XGL_CHECK_E_QUEUE_DUP));
 }
@@ -288,7 +293,7 @@ static void test_etype_range(void)
 
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 0, 8, true);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
     add_filter(&s, "eth0", 0, 0x0600 - 1);  /* 0x05FF: length field */
     n = xgl_check_validate(&s, f, 8);
     CHECK(has_code(f, n, XGL_CHECK_E_ETYPE_RANGE));
@@ -302,7 +307,7 @@ static void test_filter_dup(void)
 
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 0, 8, true);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
     add_filter(&s, "eth0", 0, 0x88B8);
     add_filter(&s, "eth0", 0, 0x88B8);
     n = xgl_check_validate(&s, f, 8);
@@ -318,8 +323,8 @@ static void test_filter_overlap(void)
     /* GOOSE on two queues of the same interface: ambiguous path */
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 0, 8, true);
-    add_xsk(&s, "eth0", 1, 8, true);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
+    add_xsk(&s, "eth0", 1, 8, true, -1, -1, -1, -1);
     add_filter(&s, "eth0", 0, 0x88B8);
     add_filter(&s, "eth0", 1, 0x88B8);
     n = xgl_check_validate(&s, f, 8);
@@ -335,8 +340,8 @@ static void test_filter_disjoint_ifs(void)
     /* same ethertype on different interfaces: fine */
     spec_init(&s, 16, 0);
     add_node(&s, 0, "dispatch", false);
-    add_xsk(&s, "eth0", 0, 8, true);
-    add_xsk(&s, "eth1", 0, 4, true);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
+    add_xsk(&s, "eth1", 0, 4, true, -1, -1, -1, -1);
     add_filter(&s, "eth0", 0, 0x88B8);
     add_filter(&s, "eth1", 0, 0x88B8);
     n = xgl_check_validate(&s, f, 8);
@@ -353,11 +358,67 @@ static void test_warnings(void)
     add_node(&s, 0, "dispatch", false);
     add_node(&s, 1, "hsr_dup_detect", true);   /* stateful */
     add_edge(&s, 0, 1);
-    add_xsk(&s, "eth0", 0, 8, false);          /* copy mode */
+    add_xsk(&s, "eth0", 0, 8, false, 30, -1, -1, -1);          /* copy mode */
     n = xgl_check_validate(&s, f, 8);
     CHECK(has_code(f, n, XGL_CHECK_W_STATEFUL));
     CHECK(has_code(f, n, XGL_CHECK_W_NO_ZEROCOPY));
     CHECK(only_ok(f, n));                      /* no errors */
+}
+
+static void test_irq_dup(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_xsk(&s, "eth0", 0, 8, true, 24, 2, 0, 0);
+    add_xsk(&s, "eth0", 1, 8, true, 24, 3, 0, 0);   /* same IRQ 24 */
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_IRQ_DUP));
+}
+
+static void test_cpu_dup(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_xsk(&s, "eth0", 0, 8, true, 24, 2, 0, 0);
+    add_xsk(&s, "eth1", 0, 4, true, 40, 2, 0, 0);   /* same CPU 2 */
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_CPU_DUP));
+}
+
+static void test_numa_mismatch(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_xsk(&s, "eth0", 0, 8, true, 24, 2, 1, 0);   /* queue numa 1, cpu numa 0 */
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_W_NUMA_MISMATCH));
+    CHECK(only_ok(f, n));
+}
+
+static void test_no_dedication(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_W_NO_DEDICATION));
+    CHECK(only_ok(f, n));
 }
 
 static void test_determinism(void)
@@ -374,8 +435,8 @@ static void test_determinism(void)
     add_edge(&s, 0, 1);
     add_edge(&s, 0, 2);
     add_edge(&s, 2, 3);
-    add_xsk(&s, "eth0", 0, 8, true);
-    add_xsk(&s, "eth0", 0, 8, true);           /* dup queue */
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);
+    add_xsk(&s, "eth0", 0, 8, true, -1, -1, -1, -1);           /* dup queue */
     add_filter(&s, "eth0", 0, 0x88B8);
     add_filter(&s, "eth0", 1, 0x88B8);         /* overlap */
 
@@ -410,6 +471,10 @@ int main(void)
     test_filter_overlap();
     test_filter_disjoint_ifs();
     test_warnings();
+    test_irq_dup();
+    test_cpu_dup();
+    test_numa_mismatch();
+    test_no_dedication();
     test_determinism();
 
     if (failures == 0) {

@@ -102,28 +102,69 @@ static int parse_line(char *line, int lineno, struct xgl_check_spec *spec)
 
     if (strcmp(directive, "xsk") == 0) {
         char ifname[XGL_CHECK_IFNAME_LEN];
-        char extra[16] = {0};
+        struct xgl_check_xsk *x;
+        char *rest, *tok;
         int queue, nqueues;
 
-        if (sscanf(line + consumed, " %15s %d %d %15s", ifname, &queue,
-                   &nqueues, extra) >= 3) {
-            if (spec->n_xsks >= XGL_CHECK_MAX_XSKS) {
-                fprintf(stderr, "line %d: too many xsk bindings\n", lineno);
+        if (sscanf(line + consumed, " %15s %d %d", ifname, &queue,
+                   &nqueues) != 3) {
+            fprintf(stderr, "line %d: xsk needs <ifname> <queue_id> "
+                    "<n_queues> [zerocopy] [irq=N] [cpu=N] [numa=N] "
+                    "[cpu_numa=N]\n", lineno);
+            return -1;
+        }
+        if (spec->n_xsks >= XGL_CHECK_MAX_XSKS) {
+            fprintf(stderr, "line %d: too many xsk bindings\n", lineno);
+            return -1;
+        }
+        x = &spec->xsks[spec->n_xsks];
+        (void)snprintf(x->ifname, sizeof(x->ifname), "%s", ifname);
+        x->queue_id = queue;
+        x->n_queues = nqueues;
+        x->zerocopy = false;
+        x->irq = -1;
+        x->cpu = -1;
+        x->numa_node = -1;
+        x->cpu_numa_node = -1;
+
+        /* optional key=value / flag tokens after the positionals */
+        rest = line + consumed;
+        /* find the byte offset just past the third token */
+        {
+            int off = 0, seen = 0;
+            while (rest[off] != '\0' && seen < 3) {
+                while (rest[off] == ' ' || rest[off] == '\t')
+                    off++;
+                if (rest[off] == '\0')
+                    break;
+                while (rest[off] != '\0' && rest[off] != ' ' &&
+                       rest[off] != '\t' && rest[off] != '\n')
+                    off++;
+                seen++;
+            }
+            rest += off;
+        }
+        tok = strtok(rest, " \t\n");
+        while (tok != NULL) {
+            if (strcmp(tok, "zerocopy") == 0) {
+                x->zerocopy = true;
+            } else if (strncmp(tok, "irq=", 4) == 0) {
+                x->irq = atoi(tok + 4);
+            } else if (strncmp(tok, "cpu=", 4) == 0) {
+                x->cpu = atoi(tok + 4);
+            } else if (strncmp(tok, "numa=", 5) == 0) {
+                x->numa_node = atoi(tok + 5);
+            } else if (strncmp(tok, "cpu_numa=", 9) == 0) {
+                x->cpu_numa_node = atoi(tok + 9);
+            } else {
+                fprintf(stderr, "line %d: unknown xsk option '%s'\n",
+                        lineno, tok);
                 return -1;
             }
-            (void)snprintf(spec->xsks[spec->n_xsks].ifname,
-                           sizeof(spec->xsks[spec->n_xsks].ifname), "%s",
-                           ifname);
-            spec->xsks[spec->n_xsks].queue_id = queue;
-            spec->xsks[spec->n_xsks].n_queues = nqueues;
-            spec->xsks[spec->n_xsks].zerocopy =
-                (strcmp(extra, "zerocopy") == 0);
-            spec->n_xsks++;
-            return 0;
+            tok = strtok(NULL, " \t\n");
         }
-        fprintf(stderr, "line %d: xsk needs <ifname> <queue_id> "
-                "<n_queues> [zerocopy]\n", lineno);
-        return -1;
+        spec->n_xsks++;
+        return 0;
     }
 
     if (strcmp(directive, "filter") == 0) {

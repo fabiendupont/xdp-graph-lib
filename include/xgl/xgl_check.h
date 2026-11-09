@@ -76,9 +76,15 @@ enum xgl_check_code {
     XGL_CHECK_E_FILTER_DUP,     /* duplicate filter on one queue  */
     XGL_CHECK_E_FILTER_OVERLAP, /* same ethertype, two queues     */
 
+    /* Resource-dedication errors */
+    XGL_CHECK_E_IRQ_DUP,        /* one IRQ shared by two queues   */
+    XGL_CHECK_E_CPU_DUP,        /* one CPU shared by two queues   */
+
     /* Warnings */
     XGL_CHECK_W_STATEFUL,       /* stateful node in the graph     */
     XGL_CHECK_W_NO_ZEROCOPY,    /* zerocopy not requested         */
+    XGL_CHECK_W_NUMA_MISMATCH,  /* queue and CPU on diff. NUMA    */
+    XGL_CHECK_W_NO_DEDICATION,  /* neither cpu nor irq dedicated  */
     XGL_CHECK_W_TRUNCATED,      /* findings buffer exhausted      */
 };
 
@@ -99,12 +105,21 @@ struct xgl_check_edge {
  * One AF_XDP socket binding: a dedicated consumer of one RX queue.
  * n_queues is the total queue count of the interface as known to the
  * orchestrator (the check does not read sysfs — determinism).
+ *
+ * Resource-dedication fields (all optional, -1 = unknown/none): the
+ * determinism story is one queue + one IRQ + one CPU, all on the
+ * same NUMA node.  The check enforces uniqueness of dedicated
+ * resources across the whole graph; NUMA consistency is a warning.
  */
 struct xgl_check_xsk {
     char ifname[XGL_CHECK_IFNAME_LEN];
     int queue_id;
     int n_queues;
     bool zerocopy;                      /* zero-copy intended */
+    int irq;                            /* IRQ of the queue (-1 unknown) */
+    int cpu;                            /* dedicated CPU id (-1 none) */
+    int numa_node;                      /* NUMA node of the queue (-1 unknown) */
+    int cpu_numa_node;                  /* NUMA node of the CPU (-1 unknown) */
 };
 
 /*
@@ -154,6 +169,9 @@ struct xgl_check_finding {
  *      no duplicate filters, filter sets on the same interface are
  *      pairwise disjoint (a frame matches at most one path — the
  *      core determinism invariant).
+ *   6. Resource dedication: a dedicated IRQ serves at most one
+ *      queue, a dedicated CPU serves at most one queue; queue and
+ *      CPU NUMA nodes should agree (warning).
  *
  * Findings are sorted deterministically (severity descending, then
  * code, then message).  If the buffer fills, a single
