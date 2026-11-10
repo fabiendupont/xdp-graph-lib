@@ -29,6 +29,8 @@
 #define XGL_CHECK_MAX_EDGES 512
 #define XGL_CHECK_MAX_XSKS 64
 #define XGL_CHECK_MAX_FILTERS 256
+#define XGL_CHECK_MAX_EXITS 128
+#define XGL_CHECK_MAX_BINDINGS 128
 #define XGL_CHECK_IFNAME_LEN 16
 #define XGL_CHECK_NAME_LEN 32
 #define XGL_CHECK_MSG_LEN 160
@@ -79,6 +81,12 @@ enum xgl_check_code {
     /* Resource-dedication errors */
     XGL_CHECK_E_IRQ_DUP,        /* one IRQ shared by two queues   */
     XGL_CHECK_E_CPU_DUP,        /* one CPU shared by two queues   */
+
+    /* Named-exit binding errors */
+    XGL_CHECK_E_EXIT_UNBOUND,   /* declared exit without binding  */
+    XGL_CHECK_E_BIND_UNKNOWN,   /* binding for undeclared exit    */
+    XGL_CHECK_E_BIND_SLOT,      /* binding slot out of range      */
+    XGL_CHECK_E_BIND_DUP,       /* two bindings for one exit      */
 
     /* Warnings */
     XGL_CHECK_W_STATEFUL,       /* stateful node in the graph     */
@@ -132,6 +140,22 @@ struct xgl_check_filter {
     unsigned short ethertype;
 };
 
+/*
+ * One named exit declared by a node (XGL_EXIT_TAG in the BPF
+ * object's .xgl.exits section).
+ */
+struct xgl_check_exit {
+    char prog[XGL_CHECK_NAME_LEN];
+    char exit_name[XGL_CHECK_NAME_LEN];
+};
+
+/* One composition-time binding: exit -> PROG_ARRAY slot. */
+struct xgl_check_binding {
+    char prog[XGL_CHECK_NAME_LEN];
+    char exit_name[XGL_CHECK_NAME_LEN];
+    int  slot;
+};
+
 /* Declarative description of the entire intended graph. */
 struct xgl_check_spec {
     char name[XGL_CHECK_NAME_LEN];
@@ -145,6 +169,10 @@ struct xgl_check_spec {
     int n_xsks;
     struct xgl_check_filter filters[XGL_CHECK_MAX_FILTERS];
     int n_filters;
+    struct xgl_check_exit exits[XGL_CHECK_MAX_EXITS];
+    int n_exits;
+    struct xgl_check_binding bindings[XGL_CHECK_MAX_BINDINGS];
+    int n_bindings;
 };
 
 /* One validation finding. */
@@ -172,6 +200,8 @@ struct xgl_check_finding {
  *   6. Resource dedication: a dedicated IRQ serves at most one
  *      queue, a dedicated CPU serves at most one queue; queue and
  *      CPU NUMA nodes should agree (warning).
+ *   7. Named exits: every declared exit has exactly one binding;
+ *      binding slots are in range and reference declared exits.
  *
  * Findings are sorted deterministically (severity descending, then
  * code, then message).  If the buffer fills, a single

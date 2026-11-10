@@ -62,6 +62,27 @@ static void add_xsk(struct xgl_check_spec *s, const char *ifname, int queue,
     s->n_xsks++;
 }
 
+static void add_exit(struct xgl_check_spec *s, const char *prog,
+                     const char *ename)
+{
+    (void)snprintf(s->exits[s->n_exits].prog,
+                   sizeof(s->exits[s->n_exits].prog), "%s", prog);
+    (void)snprintf(s->exits[s->n_exits].exit_name,
+                   sizeof(s->exits[s->n_exits].exit_name), "%s", ename);
+    s->n_exits++;
+}
+
+static void add_binding(struct xgl_check_spec *s, const char *prog,
+                        const char *ename, int slot)
+{
+    (void)snprintf(s->bindings[s->n_bindings].prog,
+                   sizeof(s->bindings[s->n_bindings].prog), "%s", prog);
+    (void)snprintf(s->bindings[s->n_bindings].exit_name,
+                   sizeof(s->bindings[s->n_bindings].exit_name), "%s", ename);
+    s->bindings[s->n_bindings].slot = slot;
+    s->n_bindings++;
+}
+
 static void add_filter(struct xgl_check_spec *s, const char *ifname,
                        int queue, unsigned short etype)
 {
@@ -421,6 +442,80 @@ static void test_no_dedication(void)
     CHECK(only_ok(f, n));
 }
 
+static void test_exits_valid(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_node(&s, 1, "filter", false);
+    add_edge(&s, 0, 1);
+    add_exit(&s, "filter", "parse");
+    add_exit(&s, "filter", "drop");
+    add_binding(&s, "filter", "parse", 2);
+    add_binding(&s, "filter", "drop", 15);
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(only_ok(f, n));
+}
+
+static void test_exit_unbound(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_exit(&s, "filter", "parse");
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_EXIT_UNBOUND));
+}
+
+static void test_bind_unknown(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_exit(&s, "filter", "parse");
+    add_binding(&s, "filter", "ghost", 2);
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_BIND_UNKNOWN));
+}
+
+static void test_bind_slot_range(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_exit(&s, "filter", "parse");
+    add_binding(&s, "filter", "parse", 99);
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_BIND_SLOT));
+}
+
+static void test_bind_dup(void)
+{
+    struct xgl_check_spec s;
+    struct xgl_check_finding f[8];
+    int n;
+
+    spec_init(&s, 16, 0);
+    add_node(&s, 0, "dispatch", false);
+    add_exit(&s, "filter", "parse");
+    add_binding(&s, "filter", "parse", 2);
+    add_binding(&s, "filter", "parse", 3);
+    n = xgl_check_validate(&s, f, 8);
+    CHECK(has_code(f, n, XGL_CHECK_E_BIND_DUP));
+}
+
 static void test_determinism(void)
 {
     struct xgl_check_spec s;
@@ -475,6 +570,11 @@ int main(void)
     test_cpu_dup();
     test_numa_mismatch();
     test_no_dedication();
+    test_exits_valid();
+    test_exit_unbound();
+    test_bind_unknown();
+    test_bind_slot_range();
+    test_bind_dup();
     test_determinism();
 
     if (failures == 0) {

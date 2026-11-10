@@ -430,6 +430,70 @@ static void check_filters(const struct xgl_check_spec *spec,
     }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Named-exit binding checks                                           */
+/* ------------------------------------------------------------------ */
+
+static void check_exits(const struct xgl_check_spec *spec,
+                        struct xgl_check_ctx *ctx)
+{
+    int i, j;
+
+    for (i = 0; i < spec->n_exits; i++) {
+        const struct xgl_check_exit *e = &spec->exits[i];
+        int bound = 0;
+
+        for (j = 0; j < spec->n_bindings; j++) {
+            const struct xgl_check_binding *b = &spec->bindings[j];
+
+            if (strcmp(b->prog, e->prog) != 0 ||
+                strcmp(b->exit_name, e->exit_name) != 0)
+                continue;
+            bound++;
+            if (bound == 1) {
+                if (b->slot < 0 ||
+                    (spec->max_nodes >= 1 && b->slot >= spec->max_nodes)) {
+                    xgl_check_add(ctx, XGL_CHECK_E_BIND_SLOT,
+                                  XGL_CHECK_SEV_ERROR,
+                                  "exit '%s/%s' bound to slot %d out of range",
+                                  e->prog, e->exit_name, b->slot);
+                }
+            } else {
+                xgl_check_add(ctx, XGL_CHECK_E_BIND_DUP, XGL_CHECK_SEV_ERROR,
+                              "exit '%s/%s' has %d bindings",
+                              e->prog, e->exit_name, bound);
+            }
+        }
+
+        if (bound == 0) {
+            xgl_check_add(ctx, XGL_CHECK_E_EXIT_UNBOUND, XGL_CHECK_SEV_ERROR,
+                          "exit '%s/%s' declared but not bound "
+                          "(add_node would reject with -ENOENT)",
+                          e->prog, e->exit_name);
+        }
+    }
+
+    for (i = 0; i < spec->n_bindings; i++) {
+        const struct xgl_check_binding *b = &spec->bindings[i];
+        int declared = 0;
+
+        for (j = 0; j < spec->n_exits; j++) {
+            if (strcmp(spec->exits[j].prog, b->prog) == 0 &&
+                strcmp(spec->exits[j].exit_name, b->exit_name) == 0) {
+                declared = 1;
+                break;
+            }
+        }
+        if (!declared) {
+            xgl_check_add(ctx, XGL_CHECK_E_BIND_UNKNOWN, XGL_CHECK_SEV_ERROR,
+                          "binding '%s/%s' -> slot %d references an "
+                          "undeclared exit",
+                          b->prog, b->exit_name, b->slot);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -460,6 +524,7 @@ int xgl_check_validate(const struct xgl_check_spec *spec,
     }
     check_xsks(spec, &ctx);
     check_filters(spec, &ctx);
+    check_exits(spec, &ctx);
 
     if (ctx.truncated && ctx.count < ctx.cap) {
         xgl_check_add(&ctx, XGL_CHECK_W_TRUNCATED, XGL_CHECK_SEV_WARNING,
@@ -493,6 +558,10 @@ const char *xgl_check_code_str(enum xgl_check_code code)
     case XGL_CHECK_E_FILTER_OVERLAP: return "E_FILTER_OVERLAP";
     case XGL_CHECK_E_IRQ_DUP:        return "E_IRQ_DUP";
     case XGL_CHECK_E_CPU_DUP:        return "E_CPU_DUP";
+    case XGL_CHECK_E_EXIT_UNBOUND:   return "E_EXIT_UNBOUND";
+    case XGL_CHECK_E_BIND_UNKNOWN:   return "E_BIND_UNKNOWN";
+    case XGL_CHECK_E_BIND_SLOT:      return "E_BIND_SLOT";
+    case XGL_CHECK_E_BIND_DUP:       return "E_BIND_DUP";
     case XGL_CHECK_W_STATEFUL:       return "W_STATEFUL";
     case XGL_CHECK_W_NO_ZEROCOPY:    return "W_NO_ZEROCOPY";
     case XGL_CHECK_W_NUMA_MISMATCH:  return "W_NUMA_MISMATCH";

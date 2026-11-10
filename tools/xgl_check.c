@@ -196,6 +196,54 @@ static int parse_line(char *line, int lineno, struct xgl_check_spec *spec)
         return 0;
     }
 
+    if (strcmp(directive, "exit") == 0) {
+        char prog[XGL_CHECK_NAME_LEN];
+        char ename[XGL_CHECK_NAME_LEN];
+
+        if (sscanf(line + consumed, " %31s %31s", prog, ename) != 2) {
+            fprintf(stderr, "line %d: exit needs <prog> <exit-name>\n",
+                    lineno);
+            return -1;
+        }
+        if (spec->n_exits >= XGL_CHECK_MAX_EXITS) {
+            fprintf(stderr, "line %d: too many exits\n", lineno);
+            return -1;
+        }
+        (void)snprintf(spec->exits[spec->n_exits].prog,
+                       sizeof(spec->exits[spec->n_exits].prog), "%s", prog);
+        (void)snprintf(spec->exits[spec->n_exits].exit_name,
+                       sizeof(spec->exits[spec->n_exits].exit_name), "%s",
+                       ename);
+        spec->n_exits++;
+        return 0;
+    }
+
+    if (strcmp(directive, "bind") == 0) {
+        char prog[XGL_CHECK_NAME_LEN];
+        char ename[XGL_CHECK_NAME_LEN];
+        int slot;
+
+        if (sscanf(line + consumed, " %31s %31s %d", prog, ename,
+                   &slot) != 3) {
+            fprintf(stderr, "line %d: bind needs <prog> <exit-name> "
+                    "<slot>\n", lineno);
+            return -1;
+        }
+        if (spec->n_bindings >= XGL_CHECK_MAX_BINDINGS) {
+            fprintf(stderr, "line %d: too many bindings\n", lineno);
+            return -1;
+        }
+        (void)snprintf(spec->bindings[spec->n_bindings].prog,
+                       sizeof(spec->bindings[spec->n_bindings].prog), "%s",
+                       prog);
+        (void)snprintf(spec->bindings[spec->n_bindings].exit_name,
+                       sizeof(spec->bindings[spec->n_bindings].exit_name),
+                       "%s", ename);
+        spec->bindings[spec->n_bindings].slot = slot;
+        spec->n_bindings++;
+        return 0;
+    }
+
     fprintf(stderr, "line %d: unknown directive '%s'\n", lineno,
             directive);
     return -1;
@@ -258,10 +306,10 @@ int main(int argc, char **argv)
             warnings++;
     }
 
-    printf("---\n%s: %d nodes, %d edges, %d xsk bindings, %d filters: "
-           "%d error(s), %d warning(s)\n",
+    printf("---\n%s: %d nodes, %d edges, %d xsk bindings, %d filters, "
+           "%d exits, %d bindings: %d error(s), %d warning(s)\n",
            spec.name, spec.n_nodes, spec.n_edges, spec.n_xsks,
-           spec.n_filters, errors, warnings);
+           spec.n_filters, spec.n_exits, spec.n_bindings, errors, warnings);
 
     return (errors > 0) ? 1 : 0;
 }
