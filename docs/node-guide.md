@@ -258,6 +258,39 @@ hard way in this codebase, so none of these are theoretical:
 The rule of thumb: pointer subtraction happens once, in 64-bit,
 adjacent to the loads, at the point of use.
 
+## Limits
+
+| Limit | Value | Notes |
+|---|---|---|
+| Graph slots | `max_nodes` at `xgl_graph_create()`, default 256 | PROG_ARRAY `max_entries`; edge bookkeeping is O(n²) |
+| **Pipeline depth** | **33 tail calls** (kernel `MAX_TAIL_CALL_CNT`) | The binding constraint: the longest root-to-terminal path may chain at most 33 programs. The 34th tail call fails — the packet dies wherever `XGL_NEXT`'s fallback leaves it. Deep chains must be flattened at composition time. |
+| Stats rows | one per slot | stats map sized to `max_nodes` |
+| Cross-project slots | collisions possible | use `egl_graph_alloc_index/reserve/free` on shared graphs |
+
+The DAG checks (`add_edge_safe`, `validate_dag`, `xgl_check`) are
+**control-plane only**: they validate declared edges, not what node
+code actually tail-calls. A node that calls back into a cycle is
+only stopped by the 33-call kernel limit. Keep `meta->next_node`
+values trustworthy (bounds-check with `XGL_NEXT_SAFE`) and let the
+declared topology be the real one.
+
+## Optimization status
+
+There is none, deliberately, at current scale: every hop is a real
+tail call (~50–100 ns: map lookup + indirect jump), and no
+cross-node optimization is possible because each hop resets
+verifier context. Unreachable nodes still occupy slots and stats
+rows (`xgl_check` flags them offline as `E_UNREACHABLE`). If
+pipelines grow, the promising direction is compile-time fusion of
+static chains into single programs with direct sub-calls — feasible
+precisely because `xgl_check`'s declarative spec already knows the
+static chain structure.
+
+Reconfiguration of a live graph is supported via staged
+transactions (`egl_reconfig_begin/add_node/remove_node/commit`),
+but is **not thread-safe**: serialize all reconfiguration on a
+graph from one control-plane thread.
+
 ## Checklist for a new node
 
 - [ ] `XGL_NODE` entry, unique program name
