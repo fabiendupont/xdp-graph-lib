@@ -54,12 +54,12 @@
  * checkers.  The enum constant lets XGL_EXIT reference the same id
  * without a second __COUNTER__ evaluation.
  */
-#define XGL_EXIT_TAG(nm)                                                \
-    enum { __xgl_exit_id_##nm = __COUNTER__ };                          \
-    static const struct xgl_exit_meta __xgl_exit_meta_##nm              \
+#define XGL_EXIT_TAG(name)                                              \
+    enum { __xgl_exit_id_##name = __COUNTER__ };                        \
+    static const struct xgl_exit_meta __xgl_exit_meta_##name            \
     __attribute__((used, section(".xgl.exits"), aligned(4))) = {        \
-        .name = #nm,                                                    \
-        .id   = __xgl_exit_id_##nm,                                     \
+        .exit_name = #name,                                             \
+        .id         = __xgl_exit_id_##name,                             \
     }
 
 /*
@@ -67,8 +67,8 @@
  *
  * Returns on failure (like XGL_NEXT); follow with a fallback action.
  */
-#define XGL_EXIT(ctx_, map_, nm)                                        \
+#define XGL_EXIT(ctx_, map_, name)                                      \
     bpf_tail_call(ctx_, &(map_),                                        \
-                  (int)(XGL_EXIT_MAGIC_BASE | __xgl_exit_id_##nm))
+                  (int)(XGL_EXIT_MAGIC_BASE | __xgl_exit_id_##name))
 
 #endif /* XGL_EXITS_BPF_H */

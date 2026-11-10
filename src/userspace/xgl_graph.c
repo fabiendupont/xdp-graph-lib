@@ -198,7 +198,7 @@ xgl_graph_add_node(struct xgl_graph *g, int index,
                 for (j = 0; j < (size_t)g->num_exit_bindings; j++) {
                     if (strcmp(g->exit_bindings[j].prog, prog_name) == 0 &&
                         strcmp(g->exit_bindings[j].exit_name,
-                               decls[i].name) == 0) {
+                               decls[i].exit_name) == 0) {
                         b = &g->exit_bindings[j];
                         break;
                     }

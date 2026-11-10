@@ -14,7 +14,11 @@
 #define XGL_EXIT_MAGIC_MASK  0xFFFF0000U
 
 struct xgl_exit_meta {
-    char  name[32];
+    /* NB: field names here must never equal a macro parameter name
+     * in xgl_exits.bpf.h — a macro parameter substitutes every bare
+     * token in the macro body, including member designators (.name
+     * became .next when the parameter was called 'name'). */
+    char  exit_name[32];
     __u32 id;
 } __attribute__((packed, aligned(4)));
 

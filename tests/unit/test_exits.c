@@ -67,7 +67,7 @@ static void test_read_decls(void)
     CHECK(xgl_read_exit_decls(OBJ_A, &decls, &n) == 0);
     CHECK(n == 1);
     if (n == 1) {
-        CHECK(strcmp(decls[0].name, "next") == 0);
+        CHECK(strcmp(decls[0].exit_name, "next") == 0);
         CHECK(decls[0].id < 65536);   /* fits the magic's id field */
     }
     free(decls);
