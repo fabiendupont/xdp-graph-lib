@@ -28,7 +28,7 @@ XGL_NODE(l2fwd_tx)
     void *data, *data_end;
     struct ethhdr *eth;
     unsigned char tmp[ETH_ALEN];
-    __u32 pkt_len;
+    __u64 pkt_len;
 
     meta = XGL_META_GET(ctx);
     if (!meta) {
@@ -46,7 +46,8 @@ XGL_NODE(l2fwd_tx)
         XGL_DROP();
     }
 
-    pkt_len = (__u32)(data_end - data);
+    /* 64-bit pointer subtraction — see docs/node-guide.md */
+    pkt_len = data_end - data;
 
     /* Swap MAC addresses */
     __builtin_memcpy(tmp, eth->h_dest, ETH_ALEN);

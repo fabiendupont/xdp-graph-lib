@@ -21,6 +21,13 @@ ebpf-graph-lib (egl_*)    ← generic: PROG_ARRAY, DAG, stats, reconfig
 - **XSKMAP helpers**: `XGL_DECLARE_XSKMAP()`, `XGL_REDIRECT_XSK()`
 - **XDP attachment**: `xgl_graph_attach()` / `xgl_graph_detach()`
 
+## Documentation
+
+- **[Writing XDP graph nodes](docs/node-guide.md)** — create a node,
+  compile it, load it into a graph, verify it. Start here.
+- [Safety documentation](docs/safety/) — failure-mode analysis,
+  verification methodology.
+
 ## Building
 
 ```sh
