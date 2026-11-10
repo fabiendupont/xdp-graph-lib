@@ -19,6 +19,7 @@
 #include <xgl/xgl_scratch.h>
 #include <xgl/xgl_stats.h>
 #include <xgl/xgl_devmap.h>
+#include <xgl/bpf/xgl_edges.bpf.h>
 
 /* XDP-specific maps (in addition to egl_prog_array and egl_node_stats) */
 XGL_DECLARE_DEVMAP(xgl_tx_ports, 256);

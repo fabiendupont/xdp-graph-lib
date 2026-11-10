@@ -121,6 +121,42 @@ XGL_PASS();
 A tail call that *returns* has failed (bad slot, no program);
 follow it with a fallback action.
 
+### Declaring your tail-call targets
+
+The graph's DAG checks only see *declared* edges — unless the node
+declares its own. `XGL_EDGE()` stores each tail-call target in a
+`.xgl.edges` metadata section inside the BPF object itself:
+
+```c
+XGL_NODE(my_node)
+{
+    ...
+    XGL_NEXT(ctx, egl_prog_array, 2);
+    XGL_DROP();
+}
+XGL_EDGE("my_node", 2);          /* one per possible target */
+```
+
+`xgl_graph_add_node()` auto-ingests the section and registers the
+edges — so **a cycle formed by code-declared edges fails node
+addition with `-ELOOP`**, discovered at load time instead of at
+runtime. `tools/xgl_edges <object.bpf.o>` extracts the declarations
+as `<object> <prog> <slot>` lines so offline checkers (xgl_check)
+can validate the topology the code actually declares.
+
+Nodes that dispatch dynamically (`meta->next_node`) cannot
+enumerate their targets — declare the wildcard instead; the loader
+invokes the callback set by `xgl_graph_set_dynamic_edge_logger()`
+so applications can log or reject dynamic nodes:
+
+```c
+XGL_EDGE_DYNAMIC("my_dispatch_node");
+```
+
+libbpf prints `skipping unrecognized data section .xgl.edges` when
+loading such objects — expected and harmless. Nodes predating the
+macro simply have no section; nothing changes for them.
+
 ### Stats
 
 `egl_node_stats` is a shared per-node stats map. Every outcome

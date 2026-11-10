@@ -38,6 +38,12 @@ struct xgl_graph {
     int xskmap_fd;
     struct xgl_xsk *xsks[XGL_MAX_XSKS];
     int num_xsks;
+
+    /* Optional callback invoked when a node declares dynamic
+     * dispatch (XGL_EDGE_DYNAMIC) — its tail-call targets cannot
+     * be enumerated, so the DAG validation covers the declared
+     * edges only.  Set via xgl_graph_set_dynamic_edge_logger(). */
+    void (*log_edge_dyn_cb)(const char *prog_name);
 };
 
 struct xgl_graph *
@@ -148,6 +154,35 @@ xgl_graph_add_node(struct xgl_graph *g, int index,
     err = egl_graph_add_node(g->egl, index, bpf_obj_path, prog_name);
     if (err)
         return err;
+
+    /* Auto-ingest declared tail-call targets from the object's
+     * ".xgl.edges" section (see xgl/bpf/xgl_edges.bpf.h). A cycle
+     * formed by code-declared edges fails here with -ELOOP —
+     * discovered at load time, not runtime. */
+    {
+        uint32_t *targets = NULL;
+        size_t ntargets = 0, i;
+
+        if (xgl_graph_read_edges(bpf_obj_path, prog_name,
+                                 &targets, &ntargets) == 0) {
+            for (i = 0; i < ntargets; i++) {
+                if (targets[i] == 0xFFFFFFFFU) {
+                    /* dynamic dispatch: cannot enumerate targets */
+                    if (g->log_edge_dyn_cb)
+                        g->log_edge_dyn_cb(prog_name);
+                    continue;
+                }
+                err = egl_graph_add_edge_safe(g->egl, index,
+                                              (int)targets[i]);
+                if (err) {
+                    egl_graph_remove_node(g->egl, index);
+                    free(targets);
+                    return err;
+                }
+            }
+            free(targets);
+        }
+    }
 
     /* Store root program info for XDP attachment.
      * Convention: index 0 is the root entry point. */
@@ -395,4 +430,12 @@ xgl_graph_get_map_fd(struct xgl_graph *g, const char *map_name)
     if (!g || !map_name)
         return -EINVAL;
     return egl_graph_get_map_fd(g->egl, map_name);
+}
+
+void
+xgl_graph_set_dynamic_edge_logger(struct xgl_graph *g,
+                                  void (*cb)(const char *prog_name))
+{
+    if (g)
+        g->log_edge_dyn_cb = cb;
 }

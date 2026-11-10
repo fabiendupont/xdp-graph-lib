@@ -3,6 +3,9 @@
 #ifndef XGL_GRAPH_H
 #define XGL_GRAPH_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <egl/egl_graph.h>
 
 struct xgl_graph;
@@ -111,6 +114,41 @@ int xgl_graph_add_tx_port(struct xgl_graph *g, const char *ifname);
  */
 struct xgl_xsk *xgl_graph_create_xsk(struct xgl_graph *g,
                                       const char *ifname, int queue_id);
+
+#include <xgl/bpf/xgl_edges.bpf.h>
+
+/*
+ * xgl_graph_read_all_edges() - Read every ".xgl.edges" entry from a
+ * BPF object, unfiltered. Caller frees. Returns -ENOENT when the
+ * object declares no edges. For offline checkers and tooling.
+ */
+int xgl_graph_read_all_edges(const char *obj_path,
+                             struct xgl_edge_meta **out, size_t *n);
+
+/*
+ * xgl_graph_read_edges() - Read a node object's declared tail-call
+ * targets from its ".xgl.edges" metadata section.
+ *
+ * Returns 0 with a malloc'd array of slot targets (caller frees);
+ * -ENOENT when the object declares no edges (terminals, or nodes
+ * predating XGL_EDGE); negative errno on malformed objects. The
+ * sentinel 0xFFFFFFFF marks dynamic dispatch.
+ *
+ * xgl_graph_add_node() ingests these automatically; this function
+ * exists for offline checkers and tooling.
+ */
+int xgl_graph_read_edges(const char *obj_path, const char *prog_name,
+                         uint32_t **out, size_t *n);
+
+/*
+ * xgl_graph_set_dynamic_edge_logger() - Callback for nodes that
+ * declare dynamic dispatch (XGL_EDGE_DYNAMIC): their tail-call
+ * targets cannot be enumerated, so DAG validation covers declared
+ * edges only. The callback lets the application log or reject
+ * such nodes.
+ */
+void xgl_graph_set_dynamic_edge_logger(struct xgl_graph *g,
+                                       void (*cb)(const char *prog_name));
 
 /*
  * xgl_graph_destroy() - Detach and clean up the graph.

@@ -40,3 +40,14 @@ test_xgl_check = executable('test_xgl_check',
     c_args: extra_c_args)
 
 test('test_xgl_check', test_xgl_check, suite: 'unit')
+
+if clang.found()
+    test_edges = executable('test_edges',
+        'test_edges.c',
+        link_with: xgl_lib,
+        include_directories: xgl_inc,
+        dependencies: [egl_dep, libbpf_dep, libelf_dep],
+        c_args: extra_c_args + ['-DEDGE_OBJ_DIR="' + meson.project_build_root() + '/tests/integration"'])
+
+    test('test_edges', test_edges, suite: 'unit')
+endif
