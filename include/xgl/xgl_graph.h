@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <egl/egl_graph.h>
+#include <xgl/xgl_exits.h>
 
 struct xgl_graph;
 struct xgl_xsk;
@@ -116,6 +117,27 @@ struct xgl_xsk *xgl_graph_create_xsk(struct xgl_graph *g,
                                       const char *ifname, int queue_id);
 
 #include <xgl/bpf/xgl_edges.bpf.h>
+
+/*
+ * xgl_graph_bind_exit() - Bind a named exit (XGL_EXIT) to a
+ * PROG_ARRAY slot.  Must be called before xgl_graph_add_node() for
+ * the node declaring the exit; add_node fails with -ENOENT on an
+ * unbound exit.  Rebinding the same (node, exit) replaces the slot.
+ *
+ * This is the grout-style named-successor model with zero-overhead
+ * tail calls: the binding is materialized by rewriting the
+ * call-site immediate in a patched copy of the object.
+ */
+int xgl_graph_bind_exit(struct xgl_graph *g, const char *prog_name,
+                        const char *exit_name, int slot);
+
+/*
+ * xgl_read_exit_decls() - Read the ".xgl.exits" declarations of a
+ * BPF object (XGL_EXIT_TAG).  Caller frees.  Returns -ENOENT when
+ * the object declares no exits.  For offline checkers and tooling.
+ */
+int xgl_read_exit_decls(const char *obj_path,
+                        struct xgl_exit_meta **out, size_t *n);
 
 /*
  * xgl_graph_read_all_edges() - Read every ".xgl.edges" entry from a

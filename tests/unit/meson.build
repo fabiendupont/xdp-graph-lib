@@ -51,3 +51,14 @@ if clang.found()
 
     test('test_edges', test_edges, suite: 'unit')
 endif
+
+if clang.found()
+    test_exits = executable('test_exits',
+        'test_exits.c',
+        link_with: xgl_lib,
+        include_directories: xgl_inc,
+        dependencies: [egl_dep, libbpf_dep, libelf_dep],
+        c_args: extra_c_args + ['-DEXIT_OBJ_DIR="' + meson.project_build_root() + '/tests/integration"'])
+
+    test('test_exits', test_exits, suite: 'unit')
+endif

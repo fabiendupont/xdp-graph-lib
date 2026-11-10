@@ -157,6 +157,63 @@ libbpf prints `skipping unrecognized data section .xgl.edges` when
 loading such objects — expected and harmless. Nodes predating the
 macro simply have no section; nothing changes for them.
 
+### Named exits: symbolic successors (grout-style)
+
+Hardcoding slot numbers couples a node to one graph's layout and
+prevents reuse.  Named exits give nodes symbolic successors with
+**zero-overhead tail calls**: the node references a *name*, and the
+loader rewrites the call-site immediate to the bound slot before
+loading (instruction patching — no runtime map lookup).
+
+```c
+XGL_EXIT_TAG(parse);              /* file scope, once per exit */
+
+XGL_NODE(my_node)
+{
+    ...
+    XGL_EXIT(ctx, egl_prog_array, parse);   /* symbolic */
+    XGL_DROP();                  /* tail call failed */
+}
+```
+
+The graph binds names to slots at composition time:
+
+```c
+xgl_graph_bind_exit(g, "my_node", "parse", 5);
+xgl_graph_add_node(g, 1, "my_node.bpf.o", "my_node");
+```
+
+`add_node` fails with `-ENOENT` if a declared exit has no binding
+(fail-closed), and loads a patched copy of the object from a
+graph-owned temp directory (removed on destroy; the kernel never
+sees the magic immediate).  `xgl_read_exit_decls()` exposes the
+declarations to offline checkers.
+
+This is the model grout (DPDK) uses — successors by name, bound per
+composition — without grout's queue-based scheduler: the binding is
+materialized into the instruction stream instead.
+
+### Conditional successors
+
+A node may have multiple successors chosen per packet:
+
+```c
+if (is_vlan)
+    XGL_NEXT(ctx, egl_prog_array, VLAN_SLOT);
+else
+    XGL_NEXT(ctx, egl_prog_array, L3_SLOT);   /* declare both edges */
+```
+
+Table-driven dispatch (map lookup → slot, then `XGL_NEXT_SAFE`) is
+the scalable form — it is how the DRA driver's filter node
+dispatches on EtherType.  Declare the dynamic wildcard
+(`XGL_EDGE_DYNAMIC`) when the target set is not enumerable.
+
+What XDP cannot do: deliver one packet to *multiple* successors
+simultaneously — there is no packet clone in XDP.  Duplication
+(HSR/PRP) is done at TC egress via `bpf_clone_redirect`; see
+xdp-hsr-prp.
+
 ### Stats
 
 `egl_node_stats` is a shared per-node stats map. Every outcome

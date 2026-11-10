@@ -58,6 +58,7 @@ xgl_lib = static_library('xgl',
     'src/userspace/xgl_xsk.c',
     'src/userspace/xgl_check.c',
     'src/userspace/xgl_edges.c',
+    'src/userspace/xgl_exits.c',
     include_directories: xgl_inc,
     dependencies: [egl_dep, libbpf_dep, libxdp_dep, libelf_dep],
     c_args: extra_c_args)

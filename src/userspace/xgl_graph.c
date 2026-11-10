@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <net/if.h>
+#include <sys/stat.h>
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -17,7 +19,15 @@
 #include <xgl/xgl_graph.h>
 #include <xgl/xgl_xsk.h>
 
+/* internal, from xgl_exits.c */
+int ensure_patch_dir(struct xgl_graph *g);
+void remove_patch_dir(struct xgl_graph *g);
+int xgl_patch_exit_immediates(const char *in_path, const char *out_path,
+                              const uint32_t *ids, const uint32_t *slots,
+                              size_t n);
+
 #define XGL_MAX_INTERFACES 16
+#define XGL_MAX_EXIT_BINDINGS 64
 #define XGL_MAX_XSKS       16
 #define XGL_PATH_MAX       256
 #define XGL_NAME_MAX       64
@@ -44,7 +54,24 @@ struct xgl_graph {
      * be enumerated, so the DAG validation covers the declared
      * edges only.  Set via xgl_graph_set_dynamic_edge_logger(). */
     void (*log_edge_dyn_cb)(const char *prog_name);
+
+    /* Named-exit bindings (XGL_EXIT): (prog, exit name) -> slot.
+     * Applied by rewriting the call-site immediate in a patched
+     * copy of the object at add_node time. */
+    struct xgl_exit_binding {
+        char prog[XGL_NAME_MAX];
+        char exit_name[32];
+        int  slot;
+    } exit_bindings[XGL_MAX_EXIT_BINDINGS];
+    int num_exit_bindings;
+
+    /* Directory holding patched object copies; created lazily,
+     * removed on destroy (the loader retains object paths). */
+    char patch_dir[XGL_PATH_MAX];
+    int patch_dir_created;
 };
+
+
 
 struct xgl_graph *
 xgl_graph_create(const char *name, int max_nodes)
@@ -139,6 +166,7 @@ xgl_graph_add_node(struct xgl_graph *g, int index,
 {
     int prog_type;
     int err;
+    const char *load_path = bpf_obj_path;
 
     if (!g)
         return -EINVAL;
@@ -151,7 +179,59 @@ xgl_graph_add_node(struct xgl_graph *g, int index,
     if (prog_type != BPF_PROG_TYPE_XDP)
         return -EINVAL;
 
-    err = egl_graph_add_node(g->egl, index, bpf_obj_path, prog_name);
+    /* Named exits: if the object declares XGL_EXIT_TAG exits,
+     * every one must have a binding; rewrite the magic immediates
+     * to the bound slots in a patched copy and load that. */
+    {
+        struct xgl_exit_meta *decls = NULL;
+        size_t ndecls = 0;
+
+        if (xgl_read_exit_decls(bpf_obj_path, &decls, &ndecls) == 0) {
+            uint32_t ids[64], slots[64];
+            size_t nbind = 0, i, j;
+            char patched[XGL_PATH_MAX + 64];
+            static int patch_seq;
+
+            for (i = 0; i < ndecls; i++) {
+                const struct xgl_exit_binding *b = NULL;
+
+                for (j = 0; j < (size_t)g->num_exit_bindings; j++) {
+                    if (strcmp(g->exit_bindings[j].prog, prog_name) == 0 &&
+                        strcmp(g->exit_bindings[j].exit_name,
+                               decls[i].name) == 0) {
+                        b = &g->exit_bindings[j];
+                        break;
+                    }
+                }
+                if (!b) {
+                    free(decls);
+                    return -ENOENT;  /* unbound exit */
+                }
+                if (nbind < 64) {
+                    ids[nbind] = decls[i].id;
+                    slots[nbind] = (uint32_t)b->slot;
+                    nbind++;
+                }
+            }
+            free(decls);
+
+            err = ensure_patch_dir(g);
+            if (err)
+                return err;
+
+            (void)snprintf(patched, sizeof(patched), "%s/%s-%d.o",
+                           g->patch_dir, prog_name, patch_seq++);
+            err = xgl_patch_exit_immediates(bpf_obj_path, patched,
+                                            ids, slots, nbind);
+            if (err) {
+                unlink(patched);
+                return err;
+            }
+            load_path = patched;
+        }
+    }
+
+    err = egl_graph_add_node(g->egl, index, load_path, prog_name);
     if (err)
         return err;
 
@@ -373,6 +453,9 @@ xgl_graph_destroy(struct xgl_graph *g)
     if (!g)
         return;
 
+    /* Remove patched object copies (loader retained their paths). */
+    remove_patch_dir(g);
+
     /* Clean up any active reconfiguration state */
     egl_reconfig_abort(g->egl);
 
@@ -438,4 +521,73 @@ xgl_graph_set_dynamic_edge_logger(struct xgl_graph *g,
 {
     if (g)
         g->log_edge_dyn_cb = cb;
+}
+
+int
+xgl_graph_bind_exit(struct xgl_graph *g, const char *prog_name,
+                    const char *exit_name, int slot)
+{
+    struct xgl_exit_binding *b;
+    size_t i;
+
+    if (!g || !prog_name || !exit_name || slot < 0)
+        return -EINVAL;
+
+    /* Idempotent: rebinding replaces. */
+    for (i = 0; i < (size_t)g->num_exit_bindings; i++) {
+        b = &g->exit_bindings[i];
+        if (strcmp(b->prog, prog_name) == 0 &&
+            strcmp(b->exit_name, exit_name) == 0) {
+            b->slot = slot;
+            return 0;
+        }
+    }
+
+    if (g->num_exit_bindings >= XGL_MAX_EXIT_BINDINGS)
+        return -ENOSPC;
+
+    b = &g->exit_bindings[g->num_exit_bindings++];
+    (void)snprintf(b->prog, sizeof(b->prog), "%s", prog_name);
+    (void)snprintf(b->exit_name, sizeof(b->exit_name), "%s", exit_name);
+    b->slot = slot;
+    return 0;
+}
+
+int
+ensure_patch_dir(struct xgl_graph *g)
+{
+    if (g->patch_dir_created)
+        return 0;
+
+    (void)snprintf(g->patch_dir, sizeof(g->patch_dir),
+                   "/tmp/xgl-patched-%d", getpid());
+    if (mkdir(g->patch_dir, 0700) != 0 && errno != EEXIST)
+        return -errno;
+    g->patch_dir_created = 1;
+    return 0;
+}
+
+void
+remove_patch_dir(struct xgl_graph *g)
+{
+    DIR *dir;
+    struct dirent *ent;
+
+    if (!g->patch_dir_created)
+        return;
+
+    dir = opendir(g->patch_dir);
+    if (dir) {
+        while ((ent = readdir(dir)) != NULL) {
+            char path[1024];
+            if (ent->d_name[0] == '.')
+                continue;
+            if (snprintf(path, sizeof(path), "%s/%s",
+                         g->patch_dir, ent->d_name) < (int)sizeof(path))
+                unlink(path);
+        }
+        closedir(dir);
+    }
+    rmdir(g->patch_dir);
+    g->patch_dir_created = 0;
 }

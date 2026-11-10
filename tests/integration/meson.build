@@ -15,6 +15,18 @@ if clang.found()
         command: [clang, bpf_cflags, '-c', '@INPUT@', '-o', '@OUTPUT@'],
         build_by_default: true)
 
+    exit_node_a_bpf = custom_target('exit_node_a.bpf.o',
+        input: '../bpf/exit_node_a.bpf.c',
+        output: 'exit_node_a.bpf.o',
+        command: [clang, bpf_cflags, '-c', '@INPUT@', '-o', '@OUTPUT@'],
+        build_by_default: true)
+
+    exit_node_b_bpf = custom_target('exit_node_b.bpf.o',
+        input: '../bpf/exit_node_b.bpf.c',
+        output: 'exit_node_b.bpf.o',
+        command: [clang, bpf_cflags, '-c', '@INPUT@', '-o', '@OUTPUT@'],
+        build_by_default: true)
+
     edge_node_b_bpf = custom_target('edge_node_b.bpf.o',
         input: '../bpf/edge_node_b.bpf.c',
         output: 'edge_node_b.bpf.o',
@@ -70,4 +82,14 @@ test_fmea = executable('test_fmea_mitigations',
     c_args: extra_c_args + ['-DBPF_OBJ_DIR="' + meson.project_build_root() + '"'])
 
 test('test_fmea_mitigations', test_fmea, suite: 'integration',
+     is_parallel: false)
+
+test_exit_bind = executable('test_exit_bind',
+    'test_exit_bind.c',
+    link_with: xgl_lib,
+    include_directories: xgl_inc,
+    dependencies: [egl_dep, libbpf_dep, libelf_dep],
+    c_args: extra_c_args + ['-DEXIT_OBJ_DIR="' + meson.project_build_root() + '/tests/integration"'])
+
+test('test_exit_bind', test_exit_bind, suite: 'integration',
      is_parallel: false)
