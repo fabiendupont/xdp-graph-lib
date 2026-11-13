@@ -1,11 +1,2 @@
 # Programs PREVAIL currently rejects while the kernel verifier
 # accepts them. None at present.
-#
-# Toolchain note: l2fwd_rx previously failed here — PREVAIL loses
-# the packet-pointer type of ctx->data across a stack spill/reload
-# around the XGL metadata-adjust macros ("Cannot subtract pointers
-# to different regions"). clang >= 23 (the CI toolchain, fedora:45)
-# does not generate the spill, so the program verifies; developers
-# on older clang may see the failure locally and can re-add the
-# entry below while iterating:
-#   l2fwd_rx.bpf.o  xdp/l2fwd_rx
